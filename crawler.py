@@ -1,7 +1,10 @@
+import copy
 import json
 import os
+import random
 import re
-from datetime import time
+import time
+from datetime import datetime
 
 from functions import get_token
 
@@ -25,6 +28,7 @@ FormTypes = [
 	"I-90",  "I-914",  "I-918",	 "I-924", "I-929",
 	"EOIR-29", "G-28"]
 
+doneN = 0
 # result = {"caseId":"", "status":"", "form":"","date":""}
 caseStatusStore = {}
 caseFinalStore = {}
@@ -32,41 +36,53 @@ caseFinalStoreTemp = {}
 
 FinalStatus = {}
 def getFinalStatusList():
+	global FinalStatus
 	with open("final_status_list.json") as jsonFile:
 		FinalStatus = json.load(jsonFile)
 	return True
-
-with open("final_status_list.json") as jsonFile:
-	FinalStatus = json.load(jsonFile)
+def extract_date(string):
+    pattern = r"([A-Z][a-z]+) (\d{1,2}), (\d{4})"
+    match = re.search(pattern, string)
+    if match:
+        return match.group()
+    else:
+        return None
 
 x_token = ""
 def get(caseId, retry, tryTimes):
+	global x_token
 	if tryTimes > 0:
 		if retry > tryTimes:
 			print(f"{caseId}:try_failed - {tryTimes}")
 			return {caseId, "try_failed", "", ""}
 
-	myClient = requests.Session()
-	myClient.max_redirects = 5
-	myClient.headers.update({'User-Agent': 'Mozilla/5.0'})
-	myClient.headers.update({'Content-Type': 'application/json'})
-	myClient.headers.update({'Authorization': 'Bearer ' + x_token})
-	myClient.headers.update({'Accept': 'application/json'})
-	myClient.headers.update({'Accept-Language': 'en-US'})
-	myClient.headers.update({'Accept-Encoding': 'gzip, deflate, br'})
-	myClient.headers.update({'Connection': 'keep-alive'})
-	myClient.headers.update({'Host': 'egov.uscis.gov'})
-	myClient.headers.update({'Origin': 'https://egov.uscis.gov'})
-	myClient.headers.update({'Referer': 'https://egov.uscis.gov/casestatus/landing.do'})
-	myClient.headers.update({'Sec-Fetch-Dest': 'empty'})
-	myClient.headers.update({'Sec-Fetch-Mode': 'cors'})
-	myClient.headers.update({'Sec-Fetch-Site': 'same-site'})
-	myClient.headers.update({'TE': 'trailers'})
-	myClient.headers.update({'X-Requested-With': 'XMLHttpRequest'})
+	user_agent_list = [
+		"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0;) Gecko/20100101 Firefox/61.0",
+		"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.186 Safari/537.36",
+		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.62 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36",
+		"Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)",
+		"Mozilla/5.0 (Macintosh; U; PPC Mac OS X 10.5; en-US; rv:1.9.2.15) Gecko/20110303 Firefox/3.6.15",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+	]
+	ua =  random.choice (user_agent_list)
+	# ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
-	url_str = "https://egov.uscis.gov/csol-api/case-statuses/"+caseId
+	with requests.Session() as myClient:
+		myClient.headers.update({'User-Agent': ua})
+		myClient.headers.update({'Accept': '*/*'})
+		myClient.headers.update({'Accept-Encoding': 'gzip, deflate, br'	})
+		myClient.headers.update({'Accept-Language': 'en-US,en;q=0.9'})
+		myClient.headers.update({'Content-Type': 'application/json'})
+		myClient.headers.update({'Authorization': x_token})
+		myClient.headers.update({'Connection': 'close'})
 
-	res = myClient.get(url_str)
+		url_str = "https://egov.uscis.gov/csol-api/case-statuses/"+caseId
+		res = myClient.get(url_str)
+
+	# print(res.status_code)
 	if res.status_code != 200:
 		# print(f"{caseId}:try_failed - {tryTimes}")
 		print(f"Error1: Retry {retry + 1} {caseId}")
@@ -76,18 +92,13 @@ def get(caseId, retry, tryTimes):
 	CaseStatusResponse = res_json["CaseStatusResponse"]
 	isValid = CaseStatusResponse["isValid"]
 
+
 	if isValid:
 		details_json = CaseStatusResponse["detailsEng"]
 		statusH = details_json["actionCodeText"]
 		statusP = details_json["actionCodeDesc"]
 		formX = details_json["formNum"]
-		statusPS = re.split(' |,', statusP)
-		dateX = ""
-		for i, w in enumerate(statusPS):
-			if w in MONTHS:
-				if dateX == "":
-					dateX = statusPS[i] + " " + statusPS[i+1] + ", " + statusPS[i+2]
-					break
+		dateX = extract_date(statusP)
 		return {"caseId":caseId, "status":statusH, "form":formX, "date":dateX}
 	else:
 		return {"caseId":caseId, "status":"invalid_num", "form":"", "date":""}
@@ -141,7 +152,7 @@ def getLastCaseNumber(center, twoDigitYr, day, code, format):
 			if crawler(center, twoDigitYr, day, code, high+i-1, format, 0)["status"] != "invalid_num":
 				high *= 2
 				break
-		if i == invalidLimit:
+		if i == invalidLimit-1:
 			break
 
 	while low < high:
@@ -151,7 +162,7 @@ def getLastCaseNumber(center, twoDigitYr, day, code, format):
 				low = mid + 1
 				break
 
-		if i == invalidLimit:
+		if i == invalidLimit-1:
 			high = mid
 
 	return low - 1
@@ -163,7 +174,13 @@ def all(center, twoDigitYr, day, code, format):
 
 	c = []
 	trueLast = 0
-	for i in range(last):
+	global caseFinalStoreTemp
+	global FinalStatus
+	global caseStatusStore
+	global caseFinalStore
+	global doneN
+
+	for i in range(last+1):
 		if format == "SC":
 			caseId = f"{center}{twoDigitYr}{day:03d}{code}{i:04d}"
 		else:
@@ -175,21 +192,22 @@ def all(center, twoDigitYr, day, code, format):
 
 	print("Asyc......")
 	newFinalStatusCase = {}
-	for i in range(last):
-		if c[i]["status"] == "invalid_num":
+	for xi in c:
+		if xi["status"] == "invalid_num":
 			continue
-		if c[i]["status"] in FinalStatus:
-			newFinalStatusCase[c[i]["caseId"]] = [c[i]["form"], c[i]["date"], c[i]["status"]]
+		if xi["status"] in FinalStatus:
+			newFinalStatusCase[xi["caseId"]] = [xi["form"], xi["date"], xi["status"]]
 		else:
-			caseStatusStore[c[i]["caseId"]] = [c[i]["form"], c[i]["date"], c[i]["status"]]
+			caseStatusStore[xi["caseId"]] = [xi["form"], xi["date"], xi["status"]]
 
 	print("Merge...")
+	doneN += 1
 	caseFinalStore.update(newFinalStatusCase)
 	print(f"Done {center}-{format}-{twoDigitYr} at day {day}: {last}")
 
 
 def main(center, fiscalYear, format, tryN):
-	print(time.now())
+	print( datetime.now())
 	print("=================================")
 	print(f"Run {center}-{format}-{fiscalYear}, Try = {tryN}")
 	print("=================================")
@@ -200,24 +218,31 @@ def main(center, fiscalYear, format, tryN):
 		return
 
 	yearDays = 365
+	global doneN
 	doneN = 0
 
 	dir = os.getcwd()
 	print("Working directory:", dir)
 
-	x_token = get_token(dir)
+	global x_token
+	x_token = get_token(dir)["x_token"]
 	print(x_token)
 
 	caseFinalStoreFile = f"{dir}/saved_data/{center}_{format}_{fiscalYear}_case_final.json"
+	global caseFinalStore
+	global caseFinalStoreTemp
 	with open(caseFinalStoreFile) as jsonFile:
 		caseFinalStore = json.load(jsonFile)
-		caseFinalStoreTemp = json.load(jsonFile)
+		caseFinalStoreTemp = copy.deepcopy(caseFinalStore)
+
+	global caseStatusStore
+	caseStatusStore = {}
 
 	if format == "LB":
 		for day in range(200):
 			all(center, fiscalYear, day, 9, "LB")
 	elif format == "SC":
-		for day in range(yearDays):
+		for day in range(1,yearDays):
 			all(center, fiscalYear, day, 5, "SC")
 
 	print("Saving data...")
@@ -232,19 +257,19 @@ def main(center, fiscalYear, format, tryN):
 
 	print("Done!")
 
-	print(time.now())
+	print( datetime.now())
 	print("=================================")
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser()
-	parser.add_argument("center", help="Center code")
-	parser.add_argument("fiscalYear", help="Fiscal year")
-	parser.add_argument("format", help="Format")
-	parser.add_argument("tryN", help="Try times")
-	args = parser.parse_args()
+	# parser = argparse.ArgumentParser()
+	# parser.add_argument("center", help="Center code")
+	# parser.add_argument("fiscalYear", help="Fiscal year")
+	# parser.add_argument("format", help="Format")
+	# parser.add_argument("tryN", help="Try times")
+	# args = parser.parse_args()
 
-	main(args.center, int(args.fiscalYear), args.format, int(args.tryN))
-
+	# main(args.center, int(args.fiscalYear), args.format, int(args.tryN))
+	main("MSC", 24, "SC", 100)
 
 
 
