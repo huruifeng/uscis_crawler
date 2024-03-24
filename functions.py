@@ -11,7 +11,7 @@ def get_response(url):
     else:
         return "error"
 
-def get_token(dir):
+def get_token(dir="."):
     N = 0
     while True:
         N = N + 1

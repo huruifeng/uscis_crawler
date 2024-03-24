@@ -70,38 +70,41 @@ def get(caseId, retry, tryTimes):
 	ua =  random.choice (user_agent_list)
 	# ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
-	with requests.Session() as myClient:
-		myClient.headers.update({'User-Agent': ua})
-		myClient.headers.update({'Accept': '*/*'})
-		myClient.headers.update({'Accept-Encoding': 'gzip, deflate, br'	})
-		myClient.headers.update({'Accept-Language': 'en-US,en;q=0.9'})
-		myClient.headers.update({'Content-Type': 'application/json'})
-		myClient.headers.update({'Authorization': x_token})
-		myClient.headers.update({'Connection': 'close'})
+	try:
+		with requests.Session() as myClient:
+			myClient.headers.update({'User-Agent': ua})
+			myClient.headers.update({'Accept': '*/*'})
+			myClient.headers.update({'Accept-Encoding': 'gzip, deflate, br'	})
+			myClient.headers.update({'Accept-Language': 'en-US,en;q=0.9'})
+			myClient.headers.update({'Content-Type': 'application/json'})
+			myClient.headers.update({'Authorization': x_token})
+			myClient.headers.update({'Connection': 'close'})
 
-		url_str = "https://egov.uscis.gov/csol-api/case-statuses/"+caseId
-		res = myClient.get(url_str)
+			url_str = "https://egov.uscis.gov/csol-api/case-statuses/"+caseId
+			res = myClient.get(url_str)
 
-	# print(res.status_code)
-	if res.status_code != 200:
-		# print(f"{caseId}:try_failed - {tryTimes}")
-		print(f"Error1: Retry {retry + 1} {caseId}")
-		return get(caseId, retry+1, tryTimes)
+		# print(res.status_code)
+		if res.status_code != 200:
+			# print(f"{caseId}:try_failed - {tryTimes}")
+			print(f"Error1: Retry {retry + 1} {caseId}")
+			return get(caseId, retry+1, tryTimes)
 
-	res_json = res.json()
-	CaseStatusResponse = res_json["CaseStatusResponse"]
-	isValid = CaseStatusResponse["isValid"]
+		res_json = res.json()
+		CaseStatusResponse = res_json["CaseStatusResponse"]
+		isValid = CaseStatusResponse["isValid"]
 
 
-	if isValid:
-		details_json = CaseStatusResponse["detailsEng"]
-		statusH = details_json["actionCodeText"]
-		statusP = details_json["actionCodeDesc"]
-		formX = details_json["formNum"]
-		dateX = extract_date(statusP)
-		return {"caseId":caseId, "status":statusH, "form":formX, "date":dateX}
-	else:
-		return {"caseId":caseId, "status":"invalid_num", "form":"", "date":""}
+		if isValid:
+			details_json = CaseStatusResponse["detailsEng"]
+			statusH = details_json["actionCodeText"]
+			statusP = details_json["actionCodeDesc"]
+			formX = details_json["formNum"]
+			dateX = extract_date(statusP)
+			return {"caseId":caseId, "status":statusH, "form":formX, "date":dateX}
+		else:
+			return {"caseId":caseId, "status":"invalid_num", "form":"", "date":""}
+	except:
+		return {"caseId": caseId, "status": "request_error", "form": "", "date": ""}
 
 
 	# (1) Valid
@@ -136,8 +139,23 @@ def buildURL(center, twoDigitYr, day, code, caseSerialNumbers, format):
 		return f"{center}{twoDigitYr}{code}{day:03d}{caseSerialNumbers:04d}"
 
 def crawler(center, twoDigitYr, day, code, caseSerialNumbers, format, tryTimes):
+	global x_token
 	urlX = buildURL(center, twoDigitYr, day, code, caseSerialNumbers, format)
-	res = get(urlX, 0, tryTimes)
+	n = 0
+	while True:
+		n += 1
+		res = get(urlX, 0, tryTimes)
+		staus = res["status"]
+		if staus == "request_error":
+			print(f"Get new token...{n}")
+			x_token = get_token()["x_token"]
+			print(x_token)
+		else:
+			break
+		if n>=10:
+			break
+
+
 	return res
 
 def getLastCaseNumber(center, twoDigitYr, day, code, format):
